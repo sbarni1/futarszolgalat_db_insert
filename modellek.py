@@ -67,11 +67,6 @@ class Felhasznalo:
     def jelszo_helyes(self, jelszo: str) -> bool:
         return self.jelszo == jelszo
 
-    def jelszo_csere(self, uj_jelszo: str) -> None:
-        _ellenoriz(len(uj_jelszo) >= MIN_JELSZO_HOSSZ,
-                   f"A jelszó legalább {MIN_JELSZO_HOSSZ} karakter legyen.")
-        self.jelszo = uj_jelszo
-
     @classmethod
     def sorbol(cls, sor) -> Felhasznalo:
         return cls(id=sor["id"], nev=sor["nev"], cim=sor["cim"], telszam=sor["telszam"],

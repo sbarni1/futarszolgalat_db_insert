@@ -6,10 +6,24 @@ from pydantic import BaseModel, Field
 
 if __package__:
     from . import adatbazis
-    from .modellek import Felhasznalo, Futar, FutarPozicio, Rendeles, Termek
+    from .modellek import (
+        FUTAR_ALLAPOTOK,
+        Felhasznalo,
+        Futar,
+        FutarPozicio,
+        Rendeles,
+        Termek,
+    )
 else:
     import adatbazis
-    from modellek import Felhasznalo, Futar, FutarPozicio, Rendeles, Termek
+    from modellek import (
+        FUTAR_ALLAPOTOK,
+        Felhasznalo,
+        Futar,
+        FutarPozicio,
+        Rendeles,
+        Termek,
+    )
 
 app = FastAPI(title="Futárszolgálat API")
 
@@ -327,6 +341,27 @@ def ep_elerheto_futarok(jarmu: str | None = None):
     return [_futar_adat(f) for f in adatbazis.elerheto_futarok(jarmu)]
 
 
+@app.get("/futar/allapotok")
+def ep_futar_allapotok():
+    megnevezesek = {
+        "elerheto": "Elérhető",
+        "uton": "Úton",
+        "szunet": "Szünet",
+    }
+    return [
+        {"ertek": allapot, "megnevezes": megnevezesek[allapot]}
+        for allapot in FUTAR_ALLAPOTOK
+    ]
+
+
+@app.get("/futar/szallitasra-alkalmas")
+def ep_szallitasra_alkalmas_futarok(km: int = Query(gt=0)):
+    return [
+        _futar_adat(f)
+        for f in adatbazis.szallitasra_alkalmas_futarok(km)
+    ]
+
+
 @app.get("/futar/{futar_id}")
 def ep_futar_lekerdez(futar_id: int):
     return _futar_adat(
@@ -534,6 +569,18 @@ def ep_rendeles_lekerdez(rendeles_id: int):
             "Rendelés nem található",
         )
     )
+
+
+@app.get("/rendeles/{rendeles_id}/allergenek")
+def ep_rendeles_allergenek(rendeles_id: int):
+    rendeles = _vagy_404(
+        adatbazis.rendeles_lekerdez(rendeles_id),
+        "Rendelés nem található",
+    )
+    return {
+        "rendeles_id": rendeles.id,
+        "allergenek": sorted(rendeles.allergenek()),
+    }
 
 
 @app.patch("/rendeles/{rendeles_id}/statusz")

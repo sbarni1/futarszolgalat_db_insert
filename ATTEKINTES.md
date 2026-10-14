@@ -102,6 +102,8 @@ Az alkalmazás neve `Futárszolgálat API`. A jelenlegi útvonalak:
 | `POST` | `/futar` | Futár felvétele. |
 | `GET` | `/futar` | Futárok keresése és lapozása. |
 | `GET` | `/futar/elerheto` | Elérhető futárok listázása, opcionális járműszűrővel. |
+| `GET` | `/futar/allapotok` | A három adatbázis által elfogadott futárállapot és megnevezése. |
+| `GET` | `/futar/szallitasra-alkalmas?km=5` | Elérhető futárok, akiknek a hatósugara legalább a megadott távolság. |
 | `GET` | `/futar/{futar_id}` | Futár lekérdezése. |
 | `PATCH` | `/futar/{futar_id}/allapot` | Futár állapotának módosítása. |
 | `GET` | `/futar/{futar_id}/rendelesek` | A futár rendelései. |
@@ -114,6 +116,7 @@ Az alkalmazás neve `Futárszolgálat API`. A jelenlegi útvonalak:
 | `POST` | `/rendeles` | Rendelés létrehozása a termékazonosítókból és darabszámokból. |
 | `GET` | `/rendeles` | Rendelések keresése/szűrése és lapozása. |
 | `GET` | `/rendeles/{rendeles_id}` | Rendelés lekérdezése a tételeivel. |
+| `GET` | `/rendeles/{rendeles_id}/allergenek` | Az adott rendelés termékeiben előforduló allergének egyedi listája. |
 | `PATCH` | `/rendeles/{rendeles_id}/statusz` | Rendelés státuszának módosítása. |
 
 A felhasználó-válasz külön összeállított mezőlistát használ, ezért a
@@ -125,8 +128,13 @@ automatikus interaktív dokumentációja a futó alkalmazás `/docs` útvonalán
 
 Az `adatbazis.py` minden alkalmazási szintű adatfüggvényéhez tartozik
 HTTP-végpont: létrehozás, lekérdezés, módosítás/törlés, bejelentkezés és a
-négy szűrőfüggvény is elérhető. A kapcsolatkezelő és a belső, aláhúzással
-kezdődő segédfüggvények nem külön végpontok. Az API listavégpontjai
+négy szűrőfüggvény is elérhető. A futárállapotok értékei az adatbázis CHECK
+megszorítását követik: `elerheto`, `uton`, `szunet`; az állapotmódosító
+végpont csak ezeket fogadja el. A szállításra alkalmas futárok lekérdezése az
+`elerheto` állapotot és a `hatosugar_km >= km` feltételt alkalmazza. A
+rendelési allergénlista a termékek allergénneveit egyedileg, rendezve adja
+vissza. A kapcsolatkezelő és a belső, aláhúzással kezdődő segédfüggvények nem
+külön végpontok. Az API listavégpontjai
 alapértelmezésben 100 rekordot adnak, legfeljebb 1000-es lapmérettel.
 
 ### Az ERD üzleti folyamatai
@@ -179,6 +187,8 @@ konfiguráció ugyanezt az `api:app` ASGI-alkalmazást indítja, a szolgáltatá
 - Az API-rendeléskérés kötelező, 1–5 közötti `ertekeles` mezőt kér, és a
   `rendeles_letrehoz()` is elutasítja a `None` értéket. Az adatbázis oszlopa
   nullable, de a nem-NULL értékeket ugyanilyen tartományra korlátozza.
+- Jelszómódosítási funkció nincs, az ERD folyamatainak megfelelően a modellből
+  is kikerült.
 - A SQLite-adatbázis fájl útvonala az alkalmazáskód mellett van rögzítve; a
   repó nem állít be külön, környezeti változóból vezérelt adatbázis-helyet.
 - Az alkalmazás adatokat olvas és módosít, de a tábla-, index- és nézetstruktúrát

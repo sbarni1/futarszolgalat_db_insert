@@ -139,6 +139,17 @@ def elerheto_futarok(jarmu: str | None = None) -> list[Futar]:
         return [Futar.sorbol(s) for s in conn.execute(sql, param)]
 
 
+def szallitasra_alkalmas_futarok(km: int) -> list[Futar]:
+    """Az elérhető, a megadott távolságot vállalni képes futárok."""
+    if km <= 0:
+        raise ValueError("A távolságnak pozitívnak kell lennie.")
+    return [
+        futar
+        for futar in futarok_szur(allapot="elerheto")
+        if futar.kiszallithat(km)
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Futár pozíciója (az SQL-ben az oszlop neve: futarID)
 # ---------------------------------------------------------------------------
