@@ -3,16 +3,17 @@
 A függvények modellobjektumot fogadnak és adnak vissza. A mentők beállítják az
 objektum id-ját is, és több táblát érintő műveletek egy tranzakcióban futnak.
 """
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
 try:
     from .modellek import (Allergen, Felhasznalo, Futar, FutarPozicio, Rendeles,
-                           RendelesTetel, Termek, jelszo_hashel)
+                           RendelesTetel, Termek, FUTAR_ALLAPOTOK, jelszo_hashel)
 except ImportError:
     from modellek import (Allergen, Felhasznalo, Futar, FutarPozicio, Rendeles,
-                          RendelesTetel, Termek, jelszo_hashel)
+                          RendelesTetel, Termek, FUTAR_ALLAPOTOK, jelszo_hashel)
 
 # A script mappájából számoljuk, így mindegy, honnan indítod a programot.
 DB_PATH = Path(__file__).resolve().parent / "futarszolgalat.db"
@@ -35,6 +36,68 @@ def _schema_biztosit(conn: sqlite3.Connection) -> None:
     ):
         if nev not in oszlopok:
             conn.execute(f"ALTER TABLE felhasznalo ADD COLUMN {nev} {definicio}")
+
+    _rendeles_jatt_schema_migracio(conn)
+
+
+def _rendeles_jatt_schema_migracio(conn: sqlite3.Connection) -> None:
+    sor = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'rendeles'"
+    ).fetchone()
+    if sor is None or sor["sql"] is None:
+        return
+    if re.search(r"jatt\s+IS\s+NULL\s+OR", sor["sql"], re.IGNORECASE):
+        return
+
+    uj_schema, cserelve = re.subn(
+        r"jatt\s+INTEGER\s+CHECK\s*\(\s*jatt\s*>\s*0\s+AND\s+"
+        r"fizetesi_mod\s*=\s*'kartya'\s*\)",
+        "jatt INTEGER CHECK (jatt IS NULL OR "
+        "(jatt > 0 AND fizetesi_mod = 'kartya'))",
+        sor["sql"],
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    if not cserelve:
+        return
+    uj_schema = re.sub(
+        r"(CREATE\s+TABLE\s+)(?:IF\s+NOT\s+EXISTS\s+)?rendeles\b",
+        r"\1rendeles_uj",
+        uj_schema,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    oszlopok = ", ".join(
+        f'"{sor["name"]}"' for sor in conn.execute("PRAGMA table_info(rendeles)")
+    )
+    kapcsolodo_objektumok = [
+        sor["sql"]
+        for sor in conn.execute(
+            """SELECT sql FROM sqlite_master
+               WHERE tbl_name = 'rendeles'
+                 AND type IN ('index', 'trigger')
+                 AND sql IS NOT NULL"""
+        )
+    ]
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("BEGIN")
+        conn.execute(uj_schema)
+        conn.execute(
+            f"INSERT INTO rendeles_uj ({oszlopok}) "
+            f"SELECT {oszlopok} FROM rendeles"
+        )
+        conn.execute("DROP TABLE rendeles")
+        conn.execute("ALTER TABLE rendeles_uj RENAME TO rendeles")
+        for sql in kapcsolodo_objektumok:
+            conn.execute(sql)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +145,8 @@ def migracio_felhasznalo() -> int:
 # ---------------------------------------------------------------------------
 def felhasznalo_letrehoz(f: Felhasznalo) -> int:
     """Elmenti a felhasználót, beállítja f.id-t, és visszaadja az új id-t."""
+    if f.email is None or f.jelszo_hash is None:
+        raise ValueError("Az adatbázisban az email és a jelszóhash kötelező.")
     with kapcsolat() as conn:
         cur = conn.execute(
             """INSERT INTO felhasznalo (nev, cim, telszam, email, password, isAdmin)
@@ -104,6 +169,8 @@ def felhasznalo_modosit(f: Felhasznalo) -> bool:
     """A már mentett (id-val rendelkező) felhasználó adatait frissíti."""
     if f.id is None:
         raise ValueError("A felhasználó még nincs elmentve (nincs id).")
+    if f.email is None or f.jelszo_hash is None:
+        raise ValueError("Az adatbázisban az email és a jelszóhash kötelező.")
     with kapcsolat() as conn:
         cur = conn.execute(
             """UPDATE felhasznalo
@@ -157,6 +224,11 @@ def futar_lekerdez(futar_id: int) -> Futar | None:
 
 
 def futar_allapot_modosit(futar_id: int, allapot: str) -> bool:
+    if allapot not in FUTAR_ALLAPOTOK:
+        raise ValueError(
+            f"Érvénytelen futárállapot: {allapot}. "
+            f"Lehetséges értékek: {', '.join(FUTAR_ALLAPOTOK)}."
+        )
     with kapcsolat() as conn:
         cur = conn.execute(
             "UPDATE futar SET allapot = ? WHERE id = ?", (allapot, futar_id)
