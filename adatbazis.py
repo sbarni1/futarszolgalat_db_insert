@@ -3,101 +3,19 @@
 A függvények modellobjektumot fogadnak és adnak vissza. A mentők beállítják az
 objektum id-ját is, és több táblát érintő műveletek egy tranzakcióban futnak.
 """
-import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
 try:
     from .modellek import (Allergen, Felhasznalo, Futar, FutarPozicio, Rendeles,
-                           RendelesTetel, Termek, FUTAR_ALLAPOTOK, jelszo_hashel)
+                           RendelesTetel, Termek, FUTAR_ALLAPOTOK)
 except ImportError:
     from modellek import (Allergen, Felhasznalo, Futar, FutarPozicio, Rendeles,
-                          RendelesTetel, Termek, FUTAR_ALLAPOTOK, jelszo_hashel)
+                          RendelesTetel, Termek, FUTAR_ALLAPOTOK)
 
 # A script mappájából számoljuk, így mindegy, honnan indítod a programot.
 DB_PATH = Path(__file__).resolve().parent / "futarszolgalat.db"
-SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
-
-
-def _schema_biztosit(conn: sqlite3.Connection) -> None:
-    """Új adatbázisnál létrehozza a táblákat, réginél kiegészíti a felhasználót."""
-    van_tabla = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1"
-    ).fetchone()
-    if van_tabla is None:
-        conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-
-    oszlopok = {sor["name"] for sor in conn.execute("PRAGMA table_info(felhasznalo)")}
-    for nev, definicio in (
-        ("email", "TEXT"),
-        ("password", "TEXT"),
-        ("isAdmin", "INTEGER NOT NULL DEFAULT 0"),
-    ):
-        if nev not in oszlopok:
-            conn.execute(f"ALTER TABLE felhasznalo ADD COLUMN {nev} {definicio}")
-
-    _rendeles_jatt_schema_migracio(conn)
-
-
-def _rendeles_jatt_schema_migracio(conn: sqlite3.Connection) -> None:
-    sor = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'rendeles'"
-    ).fetchone()
-    if sor is None or sor["sql"] is None:
-        return
-    if re.search(r"jatt\s+IS\s+NULL\s+OR", sor["sql"], re.IGNORECASE):
-        return
-
-    uj_schema, cserelve = re.subn(
-        r"jatt\s+INTEGER\s+CHECK\s*\(\s*jatt\s*>\s*0\s+AND\s+"
-        r"fizetesi_mod\s*=\s*'kartya'\s*\)",
-        "jatt INTEGER CHECK (jatt IS NULL OR "
-        "(jatt > 0 AND fizetesi_mod = 'kartya'))",
-        sor["sql"],
-        count=1,
-        flags=re.IGNORECASE,
-    )
-    if not cserelve:
-        return
-    uj_schema = re.sub(
-        r"(CREATE\s+TABLE\s+)(?:IF\s+NOT\s+EXISTS\s+)?rendeles\b",
-        r"\1rendeles_uj",
-        uj_schema,
-        count=1,
-        flags=re.IGNORECASE,
-    )
-    oszlopok = ", ".join(
-        f'"{sor["name"]}"' for sor in conn.execute("PRAGMA table_info(rendeles)")
-    )
-    kapcsolodo_objektumok = [
-        sor["sql"]
-        for sor in conn.execute(
-            """SELECT sql FROM sqlite_master
-               WHERE tbl_name = 'rendeles'
-                 AND type IN ('index', 'trigger')
-                 AND sql IS NOT NULL"""
-        )
-    ]
-
-    conn.execute("PRAGMA foreign_keys = OFF")
-    try:
-        conn.execute("BEGIN")
-        conn.execute(uj_schema)
-        conn.execute(
-            f"INSERT INTO rendeles_uj ({oszlopok}) "
-            f"SELECT {oszlopok} FROM rendeles"
-        )
-        conn.execute("DROP TABLE rendeles")
-        conn.execute("ALTER TABLE rendeles_uj RENAME TO rendeles")
-        for sql in kapcsolodo_objektumok:
-            conn.execute(sql)
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.execute("PRAGMA foreign_keys = ON")
 
 
 # ---------------------------------------------------------------------------
@@ -106,11 +24,10 @@ def _rendeles_jatt_schema_migracio(conn: sqlite3.Connection) -> None:
 @contextmanager
 def kapcsolat():
     """Siker esetén commit, hiba esetén rollback, a végén mindig zár."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(f"file:{DB_PATH.as_posix()}?mode=rw", uri=True)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")  # SQLite-ban alapból ki van kapcsolva
     try:
-        _schema_biztosit(conn)
         yield conn
         conn.commit()
     except Exception:
@@ -120,38 +37,16 @@ def kapcsolat():
         conn.close()
 
 
-# Egyszeri adatjavítás a felhasználókon (többször is futtatható)
-# ---------------------------------------------------------------------------
-def migracio_felhasznalo() -> int:
-    """1) A még sima szövegként tárolt jelszavakat hash-eli a 'password' oszlopban.
-    2) Egyedivé teszi az emailt (ha nincs duplikált email).
-    Visszaadja, hány jelszót hash-elt át."""
-    with kapcsolat() as conn:
-        regiek = conn.execute(
-            """SELECT id, password FROM felhasznalo
-               WHERE password IS NOT NULL AND password NOT LIKE 'pbkdf2_sha256$%'"""
-        ).fetchall()
-        conn.executemany(
-            "UPDATE felhasznalo SET password = ? WHERE id = ?",
-            [(jelszo_hashel(s["password"]), s["id"]) for s in regiek],
-        )
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_felhasznalo_email "
-                     "ON felhasznalo(email)")
-        return len(regiek)
-
-
 # ---------------------------------------------------------------------------
 # Felhasználó
 # ---------------------------------------------------------------------------
 def felhasznalo_letrehoz(f: Felhasznalo) -> int:
     """Elmenti a felhasználót, beállítja f.id-t, és visszaadja az új id-t."""
-    if f.email is None or f.jelszo_hash is None:
-        raise ValueError("Az adatbázisban az email és a jelszóhash kötelező.")
     with kapcsolat() as conn:
         cur = conn.execute(
             """INSERT INTO felhasznalo (nev, cim, telszam, email, password, isAdmin)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (f.nev, f.cim, f.telszam, f.email, f.jelszo_hash, int(f.admin)),
+            (f.nev, f.cim, f.telszam, f.email, f.jelszo, int(f.admin)),
         )
         f.id = cur.lastrowid
         return f.id
@@ -169,14 +64,12 @@ def felhasznalo_modosit(f: Felhasznalo) -> bool:
     """A már mentett (id-val rendelkező) felhasználó adatait frissíti."""
     if f.id is None:
         raise ValueError("A felhasználó még nincs elmentve (nincs id).")
-    if f.email is None or f.jelszo_hash is None:
-        raise ValueError("Az adatbázisban az email és a jelszóhash kötelező.")
     with kapcsolat() as conn:
         cur = conn.execute(
             """UPDATE felhasznalo
                SET nev = ?, cim = ?, telszam = ?, email = ?, password = ?, isAdmin = ?
                WHERE id = ?""",
-            (f.nev, f.cim, f.telszam, f.email, f.jelszo_hash, int(f.admin), f.id),
+            (f.nev, f.cim, f.telszam, f.email, f.jelszo, int(f.admin), f.id),
         )
         return cur.rowcount > 0
 
@@ -314,7 +207,7 @@ def allergenek_lekerdez() -> list[Allergen]:
 def rendeles_letrehoz(r: Rendeles) -> int:
     """A fejléc és az összes tétel vagy mind elmentődik, vagy egyik sem."""
     if r.ertekeles is None:
-        # Az SQL-ben az ertekeles NOT NULL, ezt a csapatnak kell eldöntenie.
+        # Az API rendelésleadási folyamata értékelést kér, bár a dump oszlopa nullable.
         raise ValueError("Az 'ertekeles' az adatbázisban kötelező mező.")
     with kapcsolat() as conn:
         cur = conn.execute(
@@ -538,10 +431,3 @@ def rendelesek_szur(*, felhasznalo_id: int | None = None,
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     print(DB_PATH, DB_PATH.exists())
-
-    migracio_felhasznalo()   # a régi sima jelszavak hash-elése, többször is futtatható
-    uj = Felhasznalo.regisztral("Teszt Elek", "Budapest, Fő utca 1.", "+36301234567",
-                                "teszt.elek@example.com", "titkos1234")
-    felhasznalo_letrehoz(uj)
-    print("Mentve, id:", uj.id)
-    print("Visszaolvasva:", felhasznalo_lekerdez(uj.id))

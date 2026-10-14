@@ -11,9 +11,8 @@ adatkezelő modul végzi, a HTTP-s felületet pedig egy FastAPI-alkalmazás adja
 
 | Fájl | Szerep |
 | --- | --- |
-| `modellek.py` | Az üzleti objektumok, adatellenőrzések és néhány üzleti szabály. Jelszóhash-elés és -ellenőrzés is itt található. |
-| `adatbazis.py` | SQLite-kapcsolat, séma-ellenőrzés és migrációk, valamint a modellek mentése, betöltése, módosítása, törlése és szűrése. |
-| `schema.sql` | A táblák, nézetek, indexek, kulcsok, alapértékek és SQL-szintű megszorítások kezdeti definíciója. |
+| `modellek.py` | Az üzleti objektumok, adatellenőrzések és néhány üzleti szabály. |
+| `adatbazis.py` | Kapcsolódás a meglévő SQLite-adatbázishoz, valamint a modellek mentése, betöltése, módosítása, törlése és szűrése. Nem hoz létre vagy migrál sémát. |
 | `api.py` | FastAPI-alkalmazás, kérésmodellek és HTTP-végpontok. |
 | `requirements.txt` | A futtatáshoz szükséges Python-csomagok verziótartományai: FastAPI és Uvicorn. |
 | `render.yaml` | Render webszolgáltatás-konfiguráció; telepítéskor függőségeket telepít, majd Uvicornnal indítja az API-t. |
@@ -31,28 +30,25 @@ Az objektumok konstruktorai többek között ellenőrzik a jármű- és rendelé
 állapotokat, a fizetési módot, a hatótávot, az árat, a borravaló feltételeit
 és a rendelt mennyiséget.
 
-A `Felhasznalo.regisztral()` a legalább 8 karakteres jelszót véletlen sóval,
-PBKDF2-HMAC-SHA256 algoritmussal hash-eli; a modell jelszó-ellenőrzése
-konstans idejű összehasonlítást használ. A modellréteg nem végez adatbázisba
-írást. Az objektumok a `sorbol()` metódusokkal alakíthatók SQLite-sorokból
-modellpéldánnyá.
+A `Felhasznalo.regisztral()` legalább 8 karakteres jelszót fogad el, és a
+dumpnak megfelelően közvetlenül a `password` oszlopba írja; a bejelentkezés
+közvetlen szöveges összehasonlítást használ. Ez a tárolási mód nem biztonságos,
+jelszót valós felhasználói fiókokhoz vagy éles rendszerben nem szabad így
+tárolni. A modellréteg nem végez adatbázisba írást. Az objektumok a `sorbol()`
+metódusokkal alakíthatók SQLite-sorokból modellpéldánnyá.
 
 A rendelés tételeket fogad, kiszámítja azok összegét, és összegyűjti a
 termékeihez tartozó allergéneket.
 
-### Adatbázis – `adatbazis.py` és `schema.sql`
+### Adatbázis – `adatbazis.py` és `futarszolgalat.db`
 
 Az adatbázis helye az `adatbazis.py` fájl könyvtára melletti
-`futarszolgalat.db`; nem a munkakönyvtártól függ. A `kapcsolat()` kontextuskezelő
-bekapcsolja az idegen kulcsok ellenőrzését, sikeres művelet után commitol,
-hiba esetén rollbackel, majd lezárja a kapcsolatot.
-
-Az első kapcsolatkor az adatkezelő lefuttatja a `schema.sql`-t, ha még nincsenek
-táblák. Meglévő adatbázisban szükség esetén kiegészíti a felhasználói
-oszlopokat, illetve migrálja a rendelés borravaló-megszorítását. A külön
-`migracio_felhasznalo()` a régi, még sima szövegként tárolt jelszavakat hash-eli,
-és egyedi indexet hoz létre az e-mail-címre; ezt a függvényt külön kell
-meghívni, nem fut le automatikusan minden kapcsolódáskor.
+`futarszolgalat.db`; nem a munkakönyvtártól függ. A `kapcsolat()` csak már
+létező adatbázist nyit meg, bekapcsolja az idegen kulcsok ellenőrzését,
+sikeres művelet után commitol, hiba esetén rollbackel, majd lezárja a
+kapcsolatot. Nem készít új adatbázist, nem futtat DDL-t, és nem változtatja meg
+a táblák, oszlopok, kulcsok, nézetek vagy indexek szerkezetét. A futtatáshoz a
+megadott adatbázisfájlnak és a várt tábláknak már létezniük kell.
 
 Az adatbázis-kezelő függvények a következő területeket fedik le:
 
@@ -69,9 +65,9 @@ Az adatbázis-kezelő függvények a következő területeket fedik le:
 A dinamikus szűrésnél az értékek paraméterezett SQL-paraméterként kerülnek a
 lekérdezésbe; a rendezhető oszlopokat engedélyezett listák korlátozzák.
 
-Az `schema.sql` fő táblái és kapcsolatai:
+Az adatbázis dumpjának fő táblái és kapcsolatai:
 
-- `felhasznalo`: felhasználói adatok, kötelező e-mail és jelszóhash, valamint
+- `felhasznalo`: felhasználói adatok, kötelező e-mail és szöveges jelszó, valamint
   adminisztrátori jelző;
 - `futar`: futár adatai, járműve, emberi vagy drón jellege, állapota és
   hatósugara;
@@ -82,19 +78,12 @@ Az `schema.sql` fő táblái és kapcsolatai:
 - `rendeles`: felhasználóhoz és futárhoz rendelt rendelés adatai;
 - `rendeles_tetel`: rendelés és termék közötti kapcsolat, darabszámmal.
 
-A séma idegen kulcsokat és megszorításokat alkalmaz. Például a jármű, fizetési
-mód és prioritás megengedett értékei korlátozottak, a hatótávnak és a
-rendelt darabszámnak pozitívnak kell lennie, a termék ára nem lehet negatív.
-A törlési szabályok több kapcsolódó rekordra is kiterjednek (`ON DELETE
-CASCADE`).
-
-Az adatbázisban ezen felül 13 előre definiált nézet és 17 névvel ellátott
-lekérdezési index található. A felhasználói e-mailre a jelszómigráció egy
-külön egyedi indexet is létrehoz. A nézetek többek között allergénes ételeket,
-elérhető futárokat, kosártartalmat, rendelési tételeket és számlaigényes
-rendeléseket tesznek egyszerűbben lekérdezhetővé. Az indexek a neveken,
-állapotokon és idegen kulcsokon végzett kereséseket segítik. Friss adatbázis
-indításakor ezeket is létrehozza a `schema.sql`.
+Az adatbázis saját idegen kulcsokat és megszorításokat alkalmaz; például a
+jármű, fizetési mód és prioritás értékeit korlátozza. A futárpozíció idegen
+kulcsánál a dump `ON DELETE RESTRICT` szabályt használ, a rendelésekhez és
+kapcsolótáblákhoz több helyen `ON DELETE CASCADE` tartozik. Az adatbázisban 13
+nézet és 17 névvel ellátott index található. Ezek részei a használt adatbázisnak,
+de az alkalmazás nem hozza létre és nem módosítja őket.
 
 ### HTTP API – `api.py`
 
@@ -102,23 +91,64 @@ Az alkalmazás neve `Futárszolgálat API`. A jelenlegi útvonalak:
 
 | Metódus | Útvonal | Művelet |
 | --- | --- | --- |
-| `POST` | `/felhasznalo` | Felhasználó regisztrálása, `201` válasszal. |
-| `GET` | `/felhasznalo/{felhasznalo_id}` | Felhasználó lekérdezése. |
-| `GET` | `/felhasznalo/{felhasznalo_id}/rendelesek` | A felhasználó rendeléseinek listázása. |
-| `GET` | `/futar/elerheto` | Elérhető futárok listázása, opcionális `jarmu` szűrővel. |
+| `POST` | `/bejelentkezes` | E-mail és jelszó ellenőrzése; siker esetén a publikus felhasználói adatokat adja vissza. Munkamenetet vagy tokent nem hoz létre. |
+| `POST` | `/felhasznalo` | Felhasználó regisztrálása. |
+| `GET` | `/felhasznalo` | Felhasználók keresése és lapozása. |
+| `GET` | `/felhasznalo/{felhasznalo_id}` | Felhasználó lekérdezése azonosító alapján. |
+| `GET` | `/felhasznalo/email/{email}` | Felhasználó lekérdezése e-mail-cím alapján. |
+| `PUT` | `/felhasznalo/{felhasznalo_id}` | Felhasználói adatok cseréje/módosítása. |
+| `DELETE` | `/felhasznalo/{felhasznalo_id}` | Felhasználó törlése; az adatbázis a kapcsolódó rendeléseket is törölheti. |
+| `GET` | `/felhasznalo/{felhasznalo_id}/rendelesek` | A felhasználó rendelései. |
+| `POST` | `/futar` | Futár felvétele. |
+| `GET` | `/futar` | Futárok keresése és lapozása. |
+| `GET` | `/futar/elerheto` | Elérhető futárok listázása, opcionális járműszűrővel. |
 | `GET` | `/futar/{futar_id}` | Futár lekérdezése. |
-| `PATCH` | `/futar/{futar_id}/allapot` | Futárállapot módosítása. |
-| `GET` | `/futar/{futar_id}/rendelesek` | A futár rendeléseinek listázása. |
+| `PATCH` | `/futar/{futar_id}/allapot` | Futár állapotának módosítása. |
+| `GET` | `/futar/{futar_id}/rendelesek` | A futár rendelései. |
+| `POST` | `/futar/pozicio` | Futárpozíció rögzítése. |
+| `GET` | `/futar/{futar_id}/poziciok` | Futárpozíciók lekérdezése, legújabb elöl. |
+| `GET` | `/allergen` | Allergének listázása. |
+| `POST` | `/termek` | Termék felvétele allergénkódokkal. |
+| `GET` | `/termek` | Termékek keresése/szűrése és lapozása, allergénekkel. |
 | `GET` | `/termek/{termek_id}` | Termék lekérdezése. |
 | `POST` | `/rendeles` | Rendelés létrehozása a termékazonosítókból és darabszámokból. |
-| `GET` | `/rendeles/{rendeles_id}` | Rendelés lekérdezése. |
+| `GET` | `/rendeles` | Rendelések keresése/szűrése és lapozása. |
+| `GET` | `/rendeles/{rendeles_id}` | Rendelés lekérdezése a tételeivel. |
 | `PATCH` | `/rendeles/{rendeles_id}/statusz` | Rendelés státuszának módosítása. |
 
 A felhasználó-válasz külön összeállított mezőlistát használ, ezért a
-jelszóhash nem kerül bele. A nem található rekordoknál az API `404` választ,
-az üzleti validációs hibáknál jellemzően `400` választ ad. A FastAPI
+jelszó nem kerül bele. A nem található rekordoknál az API `404` választ,
+az üzleti validációs hibáknál jellemzően `400`, az adatbázis egyedi vagy CHECK
+korlátozásainak ütközésekor `409` választ ad. A FastAPI
 automatikus interaktív dokumentációja a futó alkalmazás `/docs` útvonalán
 érhető el.
+
+Az `adatbazis.py` minden alkalmazási szintű adatfüggvényéhez tartozik
+HTTP-végpont: létrehozás, lekérdezés, módosítás/törlés, bejelentkezés és a
+négy szűrőfüggvény is elérhető. A kapcsolatkezelő és a belső, aláhúzással
+kezdődő segédfüggvények nem külön végpontok. Az API listavégpontjai
+alapértelmezésben 100 rekordot adnak, legfeljebb 1000-es lapmérettel.
+
+### Az ERD üzleti folyamatai
+
+Az `erd.drawio.png` az elvárt weboldali logikát vázolja fel:
+
+- felhasználói regisztráció, bejelentkezés, profil és rendelési előzmények;
+- étel/ital kínálat fogás, ár, prioritás és allergén szerinti böngészése;
+- kosár tételeinek kezelése, majd a kosár rendelésként való leadása;
+- rendelési cím, távolság, díjazás, fizetés/számlázás és rendelési státusz;
+- futárállapotok és GPS-pozíciók, futárhoz rendelés, kiszállítás követése;
+- adminisztrátori termék-, allergén-, futár- és rendeléskezelés, valamint
+  kimutatások.
+
+Az API az adatbázisban ténylegesen rendelkezésre álló függvényeket teszi
+hívhatóvá. Az ERD néhány folyamata további, jelenleg nem létező üzleti logikát
+igényel: nincs külön kosár/ideiglenes rendelés-életciklus, térképes
+legközelebbi-futár vagy távolság-/díjszámítás, online fizetési szolgáltató,
+számlakibocsátás, rendelés elfogadási/visszautasítási folyamat, illetve
+riportfüggvény az adatbázisrétegben. Ezeket a meglévő CRUD- és szűrőfüggvények
+önmagukban nem valósítják meg. A dump megszorítása miatt a jelenlegi
+rendeléslétrehozás kártyás fizetést követel meg.
 
 ## Indítás és telepítés
 
@@ -139,38 +169,32 @@ konfiguráció ugyanezt az `api:app` ASGI-alkalmazást indítja, a szolgáltatá
 
 ## Fontos határok és megjegyzések
 
-- Az adatbázisséma a felhasználóknál kötelezővé teszi az e-mail-címet és a
-  jelszóhash-t. A modell régi, bejelentkezés nélküli rekordot is képes
-  reprezentálni, de mentéskor az adatkezelő ezt egyértelmű validációs hibával
-  elutasítja.
+- A dump `felhasznalo` táblájában az e-mail és a jelszó kötelező. A jelszavak
+  sima szövegként tárolódnak, ez a dump formátumának következménye, és nem
+  biztonságos megoldás.
 - Az adatbázisréteg több műveletet biztosít, mint amennyit a HTTP API
-  jelenleg kitesz. Például a kódban van bejelentkeztetési függvény, de nincs
-  hozzá API-végpont; a futárok, termékek és allergének létrehozására sincs
-  jelenleg HTTP-végpont.
+  üzleti folyamatként lefed: az adatbázisfüggvények mind elérhetők, de az ERD
+  külső fizetési, kosár-, távolságszámítási és riportfolyamatai nem részei a
+  jelenlegi adatkezelőnek.
 - Az API-rendeléskérés kötelező, 1–5 közötti `ertekeles` mezőt kér, és a
   `rendeles_letrehoz()` is elutasítja a `None` értéket. Az adatbázis oszlopa
   nullable, de a nem-NULL értékeket ugyanilyen tartományra korlátozza.
 - A SQLite-adatbázis fájl útvonala az alkalmazáskód mellett van rögzítve; a
   repó nem állít be külön, környezeti változóból vezérelt adatbázis-helyet.
-- A `adatbazis.py` közvetlen futtatásakor annak próbarészlete valódi
-  adatbázis-műveleteket végez és tesztfelhasználót hoz létre.
-- A végleges SQL-dump felhasználói jelszavait a
-  `migracio_felhasznalo()` függvénnyel PBKDF2 hash-re kell migrálni, mielőtt
-  ezek a rekordok a modellrétegen keresztül beolvashatók. A repó adatbázisában
-  ez a migráció végrehajtásra került.
-- A rendelés borravaló-megszorításának régi változatáról az adatkezelő
-  automatikusan az újabb változatra migrál. A táblát újraépítő migráció a
-  rendeléshez tartozó saját indexeket és triggereket is megőrzi.
+- Az alkalmazás adatokat olvas és módosít, de a tábla-, index- és nézetstruktúrát
+  változatlanul hagyja. Az adatbázisfájl törlése vagy hiánya esetén nem
+  inicializál helyette üres adatbázist.
+- A dump `rendeles` táblájának `jatt` CHECK feltétele készpénzes rendelést nem
+  enged menteni; ezt a modell már adatbázis-művelet előtt validálja.
+- Jelenleg nincs API-kulcs, felhasználói munkamenet vagy szerepkör-alapú
+  jogosultság-ellenőrzés. A végpontok a kérésnek megfelelően védelem nélkül
+  érhetők el; internetes Render-telepítés előtt ezt külön rendezni kell.
 
 ## Adatbázis-betöltés és ellenőrzés
 
-Az `etelrendelesvegleges.db.sql` dump bekerült a `futarszolgalat.db` adatbázisba.
-Az importált adatbázis 14 allergént, 4 felhasználót, 1000 futárt, 1000
-futárpozíciót, 1000 terméket, 1360 termék-allergén kapcsolatot, 1000 rendelést
-és 1000 rendelési tételt tartalmaz. A SQLite integritásvizsgálata sikeres,
-idegenkulcs-sértés nem volt.
-
-Az import után a 4 régi jelszó PBKDF2-SHA256 hash-re migrálódott, így a
-felhasználói rekordok már beolvashatók a modellrétegen keresztül. A
-kompatibilitást az első felhasználó, futár, termék és rendelés betöltésével is
-ellenőriztem.
+Az `etelrendelesvegleges.db.sql` dump állítja vissza a repó
+`futarszolgalat.db` adatbázisát. A dump 14 allergént, 4 felhasználót, 1000
+futárt, 1000 futárpozíciót, 1000 terméket, 1360 termék-allergén kapcsolatot,
+1000 rendelést és 1000 rendelési tételt tartalmaz. Az adatbázis visszaállítása
+a dump eredeti tábláit, nézeteit, indexeit és adatait használja; az
+alkalmazásban nincs séma-inicializáló SQL-fájl.

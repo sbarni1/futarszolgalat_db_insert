@@ -6,9 +6,6 @@ Adatbázisba írás itt NINCS. Az id None, amíg az objektumot valaki el nem men
 """
 from __future__ import annotations
 
-import hashlib
-import hmac
-import os
 import re
 from dataclasses import dataclass, field
 
@@ -40,27 +37,7 @@ class Allergen:
 
 
 _EMAIL_MINTA = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-_HASH_ITER = 600_000
 MIN_JELSZO_HOSSZ = 8
-
-
-def jelszo_hashel(jelszo: str) -> str:
-    """Sózott PBKDF2 hash 'pbkdf2_sha256$iteráció$só$hash' formában.
-    A jelszót SOHA nem tároljuk sima szövegként."""
-    so = os.urandom(16)
-    h = hashlib.pbkdf2_hmac("sha256", jelszo.encode(), so, _HASH_ITER)
-    return f"pbkdf2_sha256${_HASH_ITER}${so.hex()}${h.hex()}"
-
-
-def jelszo_egyezik(jelszo: str, tarolt_hash: str) -> bool:
-    """True, ha a megadott jelszó megfelel a tárolt hash-nek."""
-    try:
-        _, iteracio, so, h = tarolt_hash.split("$")
-        szamolt = hashlib.pbkdf2_hmac("sha256", jelszo.encode(),
-                                      bytes.fromhex(so), int(iteracio))
-        return hmac.compare_digest(szamolt, bytes.fromhex(h))
-    except ValueError:
-        return False
 
 
 @dataclass
@@ -68,44 +45,38 @@ class Felhasznalo:
     nev: str
     cim: str
     telszam: str
-    email: str | None = None
-    jelszo_hash: str | None = field(default=None, repr=False)   # az SQL-ben a 'password' oszlopba kerül
+    email: str
+    jelszo: str = field(repr=False)
     admin: bool = False                    # az SQL-ben: isAdmin
     id: int | None = None
 
     def __post_init__(self):
         for mezo in ("nev", "cim", "telszam"):
             _ellenoriz(bool(getattr(self, mezo).strip()), f"A(z) {mezo} nem lehet üres.")
-        _ellenoriz((self.email is None) == (self.jelszo_hash is None),
-                   "Az email és a jelszóhash együtt adható meg.")
-        if self.email is not None and self.jelszo_hash is not None:
-            self.email = self.email.strip().lower()   # egységes alak: kis- és nagybetű ne számítson
-            _ellenoriz(bool(_EMAIL_MINTA.match(self.email)), f"Érvénytelen email: {self.email}")
-            _ellenoriz(self.jelszo_hash.startswith("pbkdf2_sha256$"),
-                       "A jelszó nincs hash-elve. Új felhasználónál a regisztral() metódust használd, "
-                       "régi (sima szöveges) jelszavaknál futtasd a migracio_felhasznalo()-t.")
+        self.email = self.email.strip().lower()
+        _ellenoriz(bool(_EMAIL_MINTA.match(self.email)), f"Érvénytelen email: {self.email}")
 
     @classmethod
     def regisztral(cls, nev: str, cim: str, telszam: str, email: str,
                    jelszo: str, admin: bool = False) -> Felhasznalo:
-        """Új felhasználó SIMA jelszóból: ellenőrzi a hosszát, majd hash-eli."""
+        """Új felhasználó létrehozása a dump szerinti jelszótárolással."""
         _ellenoriz(len(jelszo) >= MIN_JELSZO_HOSSZ,
                    f"A jelszó legalább {MIN_JELSZO_HOSSZ} karakter legyen.")
-        return cls(nev, cim, telszam, email, jelszo_hashel(jelszo), admin)
+        return cls(nev, cim, telszam, email, jelszo, admin)
 
     def jelszo_helyes(self, jelszo: str) -> bool:
-        return bool(self.jelszo_hash and jelszo_egyezik(jelszo, self.jelszo_hash))
+        return self.jelszo == jelszo
 
     def jelszo_csere(self, uj_jelszo: str) -> None:
         _ellenoriz(len(uj_jelszo) >= MIN_JELSZO_HOSSZ,
                    f"A jelszó legalább {MIN_JELSZO_HOSSZ} karakter legyen.")
-        self.jelszo_hash = jelszo_hashel(uj_jelszo)
+        self.jelszo = uj_jelszo
 
     @classmethod
     def sorbol(cls, sor) -> Felhasznalo:
         return cls(id=sor["id"], nev=sor["nev"], cim=sor["cim"], telszam=sor["telszam"],
-                   email=sor["email"], jelszo_hash=sor["password"],
-                   admin=bool(sor["isAdmin"]))   # NULL (nincs megadva) = nem admin
+                   email=sor["email"], jelszo=sor["password"],
+                   admin=bool(sor["isAdmin"]))
 
 
 @dataclass
@@ -198,7 +169,7 @@ class Rendeles:
     fizetesi_mod: str
     szamla: int
     km: int
-    ertekeles: int | None = None  # az SQL-ben NOT NULL; itt None = még nincs értékelve
+    ertekeles: int | None = None  # Az API rendelésleadásakor kötelező.
     prioritas: int = 0
     jatt: int | None = None
     statusz: str = "új"
@@ -212,8 +183,10 @@ class Rendeles:
         _ellenoriz(self.km > 0, "A km pozitív kell legyen.")
         _ellenoriz(self.ertekeles is None or self.ertekeles in (1, 2, 3, 4, 5),
                    "Az értékelés 1 és 5 közötti.")
-        _ellenoriz(self.jatt is None or (self.jatt > 0 and self.fizetesi_mod == "kartya"),
-                   "Borravaló (jatt) csak kártyás fizetésnél, pozitív összeggel adható.")
+        _ellenoriz(
+            self.fizetesi_mod == "kartya" and (self.jatt is None or self.jatt > 0),
+            "A dump rendelési megszorítása csak kártyás fizetést enged.",
+        )
 
     # --- üzleti logika ---
     def tetel_hozzaad(self, termek: Termek, db: int = 1) -> None:
