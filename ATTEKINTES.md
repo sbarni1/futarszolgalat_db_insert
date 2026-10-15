@@ -69,8 +69,7 @@ Az adatbázis dumpjának fő táblái és kapcsolatai:
 
 - `felhasznalo`: felhasználói adatok, kötelező e-mail és szöveges jelszó, valamint
   adminisztrátori jelző;
-- `futar`: futár adatai, járműve, emberi vagy drón jellege, állapota és
-  hatósugara;
+- `futar`: futár adatai, járműve, az `ember` mező, állapota és hatósugara;
 - `futar_pozicio`: futárhoz tartozó GPS-koordináták és címek;
 - `termek`: étel vagy ital neve, fogása, leírása, ára és elkészítési ideje;
 - `allergen`: allergénkód és név;
@@ -79,7 +78,11 @@ Az adatbázis dumpjának fő táblái és kapcsolatai:
 - `rendeles_tetel`: rendelés és termék közötti kapcsolat, darabszámmal.
 
 Az adatbázis saját idegen kulcsokat és megszorításokat alkalmaz; például a
-jármű, fizetési mód és prioritás értékeit korlátozza. A futárpozíció idegen
+jármű, fizetési mód és prioritás értékeit korlátozza. Az alkalmazás új
+futároknál csak autót, biciklit és motort fogad el; az API sem az `ember`
+mezőt, sem más járműtípust nem tesz elérhetővé. A rendelésmentés is csak
+támogatott járműhöz enged rendelést társítani. Az `ember` mező az adatbázis
+belső kezelése miatt változatlan marad. A futárpozíció idegen
 kulcsánál a dump `ON DELETE RESTRICT` szabályt használ, a rendelésekhez és
 kapcsolótáblákhoz több helyen `ON DELETE CASCADE` tartozik. Az adatbázisban 13
 nézet és 17 névvel ellátott index található. Ezek részei a használt adatbázisnak,
@@ -125,6 +128,47 @@ az üzleti validációs hibáknál jellemzően `400`, az adatbázis egyedi vagy 
 korlátozásainak ütközésekor `409` választ ad. A FastAPI
 automatikus interaktív dokumentációja a futó alkalmazás `/docs` útvonalán
 érhető el.
+
+#### Elérés Renderből és PHP-ből
+
+Az API Renderen beállított alapcímét a Render Dashboard szolgáltatásoldalán
+lehet megnézni. Ne rögzítsd a szolgáltatás konkrét URL-jét a repóban; a PHP
+alkalmazás konfigurációjából add meg, például `FUTARSZOLGALAT_API_URL`
+környezeti változóként (a Render URL önmagában publikus cím, nem hozzáférési
+jelszó vagy API-kulcs).
+
+- Interaktív API-dokumentáció: `<API-alapcím>/docs`
+- Példa elérhető futárok lekérésére:
+  `GET <API-alapcím>/futar/elerheto`
+- Példa 5 km-re alkalmas futárok lekérésére:
+  `GET <API-alapcím>/futar/szallitasra-alkalmas?km=5`
+
+A PHP backend teljes URL-re küldött HTTP-kéréssel, JSON-adatcserével hívja az
+API-t; nem kell közvetlenül csatlakoznia a Python alkalmazáshoz vagy az SQLite
+fájlhoz. A PHP GET-kérés például cURL-lel, az alapcímet környezeti
+változóból olvasva:
+
+```php
+$apiBase = rtrim(getenv('FUTARSZOLGALAT_API_URL'), '/');
+$ch = curl_init($apiBase . '/futar/elerheto');
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+$json = curl_exec($ch);
+if ($json === false) {
+    throw new RuntimeException(curl_error($ch));
+}
+$status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+curl_close($ch);
+
+if ($status < 200 || $status >= 300) {
+    throw new RuntimeException("A futár API HTTP $status hibát adott.");
+}
+$futarok = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+```
+
+Az API gyökérútvonala (`/`) nem szolgál ki kezdőoldalt, ezért ott a `404 Not
+Found` válasz normális; az API-dokumentáció és a végpontok ettől még a saját
+útvonalaikon érhetők el. A PHP-szerverről indított HTTP-kéréshez a PHP cURL
+kiterjesztésének engedélyezve kell lennie.
 
 Az `adatbazis.py` minden alkalmazási szintű adatfüggvényéhez tartozik
 HTTP-végpont: létrehozás, lekérdezés, módosítás/törlés, bejelentkezés és a
@@ -203,8 +247,14 @@ konfiguráció ugyanezt az `api:app` ASGI-alkalmazást indítja, a szolgáltatá
 ## Adatbázis-betöltés és ellenőrzés
 
 Az `etelrendelesvegleges.db.sql` dump állítja vissza a repó
-`futarszolgalat.db` adatbázisát. A dump 14 allergént, 4 felhasználót, 1000
-futárt, 1000 futárpozíciót, 1000 terméket, 1360 termék-allergén kapcsolatot,
-1000 rendelést és 1000 rendelési tételt tartalmaz. Az adatbázis visszaállítása
-a dump eredeti tábláit, nézeteit, indexeit és adatait használja; az
-alkalmazásban nincs séma-inicializáló SQL-fájl.
+`futarszolgalat.db` adatbázisát. Az eredeti dump 14 allergént, 4 felhasználót,
+1000 futárt, 1000 futárpozíciót, 1000 terméket, 1360 termék-allergén
+kapcsolatot, 1000 rendelést és 1000 rendelési tételt tartalmazott. A drónos
+kiszállítások kivezetésekor 89 drónos futárt, 89 hozzájuk tartozó pozíciót,
+valamint 86 rendelést és a hozzájuk tartozó rendelési tételeket töröltük. A
+jelenlegi adatbázisban 911 futár, 911 futárpozíció, 914 rendelés és 914
+rendelési tétel maradt; az adatbázis szerkezete nem változott, a megmaradt
+futárok `ember` értékeit nem módosítottuk. A drónos rekordok törlése kizárólag
+az adatokat érintette: a dump eredeti táblái, nézetei, indexei és
+séma-megszorításai változatlanok maradtak. Az alkalmazásban nincs
+séma-inicializáló SQL-fájl.

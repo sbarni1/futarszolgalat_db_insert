@@ -1,5 +1,6 @@
 """Futárszolgálat REST API."""
 import sqlite3
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -45,9 +46,8 @@ class BejelentkezesRequest(BaseModel):
 class FutarRequest(BaseModel):
     nev: str
     telszam: str
-    jarmu: str
+    jarmu: Literal["auto", "bicikli", "motor"]
     hatosugar_km: int
-    ember: int = 0
     allapot: str = "elerheto"
 
 
@@ -121,7 +121,6 @@ def _futar_adat(futar: Futar) -> dict:
         "nev": futar.nev,
         "telszam": futar.telszam,
         "jarmu": futar.jarmu,
-        "ember": futar.ember,
         "allapot": futar.allapot,
         "hatosugar_km": futar.hatosugar_km,
     }
@@ -293,7 +292,6 @@ def ep_futar_letrehoz(body: FutarRequest):
                     nev=body.nev,
                     telszam=body.telszam,
                     jarmu=body.jarmu,
-                    ember=body.ember,
                     allapot=body.allapot,
                     hatosugar_km=body.hatosugar_km,
                 )
@@ -307,9 +305,8 @@ def ep_futar_letrehoz(body: FutarRequest):
 
 @app.get("/futar")
 def ep_futarok_szur(
-    jarmu: list[str] | None = Query(default=None),
+    jarmu: list[Literal["auto", "bicikli", "motor"]] | None = Query(default=None),
     allapot: list[str] | None = Query(default=None),
-    ember: int | None = None,
     min_hatosugar_km: int | None = None,
     nev_tartalmaz: str | None = None,
     rendezes: str | None = None,
@@ -323,7 +320,6 @@ def ep_futarok_szur(
             for f in adatbazis.futarok_szur(
                 jarmu=jarmu,
                 allapot=allapot,
-                ember=ember,
                 min_hatosugar_km=min_hatosugar_km,
                 nev_tartalmaz=nev_tartalmaz,
                 rendezes=rendezes,
@@ -337,7 +333,7 @@ def ep_futarok_szur(
 
 
 @app.get("/futar/elerheto")
-def ep_elerheto_futarok(jarmu: str | None = None):
+def ep_elerheto_futarok(jarmu: Literal["auto", "bicikli", "motor"] | None = None):
     return [_futar_adat(f) for f in adatbazis.elerheto_futarok(jarmu)]
 
 

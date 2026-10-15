@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-JARMUVEK = ("auto", "dron", "bicikli", "motor")
+JARMUVEK = ("auto", "bicikli", "motor")
 FUTAR_ALLAPOTOK = ("elerheto", "uton", "szunet")
 TERMEK_TIPUSOK = ("etel", "ital")
 FIZETESI_MODOK = ("keszpenz", "kartya")
@@ -88,8 +88,6 @@ class Futar:
         _ellenoriz(self.jarmu in JARMUVEK, f"Érvénytelen jármű: {self.jarmu}")
         _ellenoriz(self.allapot in FUTAR_ALLAPOTOK, f"Érvénytelen állapot: {self.allapot}")
         _ellenoriz(self.hatosugar_km > 0, "A hatósugár pozitív kell legyen.")
-        _ellenoriz(self.jarmu != "dron" or self.ember == 0,
-                   "Dróngyalogos futár nem lehet 'ember'.")
 
     # --- üzleti logika ---
     def elerheto(self) -> bool:

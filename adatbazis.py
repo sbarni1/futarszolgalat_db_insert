@@ -9,10 +9,10 @@ from pathlib import Path
 
 try:
     from .modellek import (Allergen, Felhasznalo, Futar, FutarPozicio, Rendeles,
-                           RendelesTetel, Termek, FUTAR_ALLAPOTOK)
+                           RendelesTetel, Termek, FUTAR_ALLAPOTOK, JARMUVEK)
 except ImportError:
     from modellek import (Allergen, Felhasznalo, Futar, FutarPozicio, Rendeles,
-                          RendelesTetel, Termek, FUTAR_ALLAPOTOK)
+                          RendelesTetel, Termek, FUTAR_ALLAPOTOK, JARMUVEK)
 
 # A script mappájából számoljuk, így mindegy, honnan indítod a programot.
 DB_PATH = Path(__file__).resolve().parent / "futarszolgalat.db"
@@ -221,6 +221,11 @@ def rendeles_letrehoz(r: Rendeles) -> int:
         # Az API rendelésleadási folyamata értékelést kér, bár a dump oszlopa nullable.
         raise ValueError("Az 'ertekeles' az adatbázisban kötelező mező.")
     with kapcsolat() as conn:
+        futar = conn.execute(
+            "SELECT jarmu FROM futar WHERE id = ?", (r.futar_id,)
+        ).fetchone()
+        if futar and futar["jarmu"] not in JARMUVEK:
+            raise ValueError("A futár járműve nem alkalmas rendelés teljesítésére.")
         cur = conn.execute(
             """INSERT INTO rendeles (felhasznalo_id, futar_id, cim, prioritas,
                                      fizetesi_mod, jatt, szamla, km, statusz, ertekeles)
