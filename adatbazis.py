@@ -474,9 +474,12 @@ def _rendeles_betolt(conn: sqlite3.Connection, sor: sqlite3.Row) -> Rendeles:
 
 
 def _sajat_rendeles(conn: sqlite3.Connection, rendeles_id: int, felhasznalo_id: int) -> sqlite3.Row:
+    """A rendelés sora, ha a kérő aktív felhasználó és ő a megrendelő."""
     sor = _letezik(conn, "rendeles", rendeles_id, "Rendelés nem található")
     if sor["felhasznalo_id"] != felhasznalo_id:
         raise JogosultsagHiba("Csak a megrendelő módosíthatja a rendelést.")
+    if not _letezik(conn, "felhasznalo", felhasznalo_id, "Felhasználó nem található")["aktiv"]:
+        raise JogosultsagHiba("Inaktív felhasználó nem módosíthat rendelést.")
     return sor
 
 
@@ -504,17 +507,24 @@ def tetel_hozzaad(rendeles_id: int, felhasznalo_id: int, termek_id: int, db: int
 
 
 def tetel_modosit(rendeles_id: int, felhasznalo_id: int, termek_id: int, db: int) -> Rendeles:
+    """Az azóta inaktivált termék darabszáma csak csökkenhet."""
     if db < 1:
         raise ValidacioHiba("A darabszám legalább 1.")
     with kapcsolat() as conn:
         sor = _sajat_rendeles(conn, rendeles_id, felhasznalo_id)
         _uj_statuszu_kell(sor)
-        cur = conn.execute(
+        tetel = conn.execute(
+            """SELECT rt.db, t.aktiv FROM rendeles_tetel rt JOIN termek t ON t.id = rt.termek_id
+               WHERE rt.rendeles_id = ? AND rt.termek_id = ?""", (rendeles_id, termek_id)
+        ).fetchone()
+        if tetel is None:
+            raise NemTalalhato("A termék nem szerepel a rendelésben.")
+        if db > tetel["db"] and not tetel["aktiv"]:
+            raise UzletiHiba("Inaktív termék mennyisége nem növelhető.")
+        conn.execute(
             "UPDATE rendeles_tetel SET db = ? WHERE rendeles_id = ? AND termek_id = ?",
             (db, rendeles_id, termek_id),
         )
-        if cur.rowcount == 0:
-            raise NemTalalhato("A termék nem szerepel a rendelésben.")
         return _rendeles_betolt(conn, sor)
 
 

@@ -171,3 +171,20 @@ def test_szurok(kliens, rendeles):
     assert r["id"] in [x["id"] for x in talalat]
     assert kliens.get("/rendeles", params={"rendezes": "jelszo"}).status_code == 400
     assert "kosar" in kliens.get("/rendeles/statuszok").json()
+
+
+def test_inaktiv_termek_mennyisege_csak_csokkenhet(kliens, rendeles):
+    r, f = rendeles()
+    termek = r["tetelek"][0]["termek"]
+    url = f"/rendeles/{r['id']}/tetelek/{termek['id']}"
+    assert kliens.patch(url, json={"felhasznalo_id": f["id"], "db": 3}).status_code == 200
+    kliens.put(f"/termek/{termek['id']}", json={"nev": termek["nev"], "fogas": "foetel", "ar": termek["ar"],
+                                                "elkeszitesi_ido": 15, "aktiv": False})
+    assert kliens.patch(url, json={"felhasznalo_id": f["id"], "db": 5}).status_code == 409
+    assert kliens.patch(url, json={"felhasznalo_id": f["id"], "db": 1}).status_code == 200
+
+
+def test_inaktiv_felhasznalo_nem_modosithatja_a_rendeleset(kliens, rendeles):
+    r, f = rendeles()
+    kliens.delete(f"/felhasznalo/{f['id']}")
+    assert kliens.post(f"/rendeles/{r['id']}/lemondas", json={"felhasznalo_id": f["id"]}).status_code == 403
