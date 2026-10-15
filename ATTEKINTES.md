@@ -120,12 +120,17 @@ Az alkalmazás neve `Futárszolgálat API`. A jelenlegi útvonalak:
 | `GET` | `/rendeles` | Rendelések keresése/szűrése és lapozása. |
 | `GET` | `/rendeles/{rendeles_id}` | Rendelés lekérdezése a tételeivel. |
 | `GET` | `/rendeles/{rendeles_id}/allergenek` | Az adott rendelés termékeiben előforduló allergének egyedi listája. |
-| `PATCH` | `/rendeles/{rendeles_id}/statusz` | Rendelés státuszának módosítása. |
+| `PATCH` | `/rendeles/{rendeles_id}/statusz` | Rendelés státuszának módosítása; `lemondva` csak a lemondási művelettel állítható be. |
+| `POST` | `/rendeles/{rendeles_id}/lemondas` | Lemondja a rendelést, ha a státusza `új` vagy `elfogadva`. |
 
 A felhasználó-válasz külön összeállított mezőlistát használ, ezért a
 jelszó nem kerül bele. A nem található rekordoknál az API `404` választ,
 az üzleti validációs hibáknál jellemzően `400`, az adatbázis egyedi vagy CHECK
-korlátozásainak ütközésekor `409` választ ad. A FastAPI
+korlátozásainak ütközésekor `409` választ ad. A lemondási végpont `404`-et ad,
+ha a rendelés nem létezik, és `409`-et, ha a rendelés már nem `új` vagy
+`elfogadva` státuszú. A státuszellenőrzés és a lemondás egyetlen feltételes
+SQL-módosításban történik; a státusz-végpont és az új rendelés létrehozása
+nem használható ennek megkerülésére. A FastAPI
 automatikus interaktív dokumentációja a futó alkalmazás `/docs` útvonalán
 érhető el.
 

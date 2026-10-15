@@ -215,11 +215,16 @@ def allergenek_lekerdez() -> list[Allergen]:
 # ---------------------------------------------------------------------------
 # Rendelés (fejléc + tételek együtt)
 # ---------------------------------------------------------------------------
+LEMONDHATO_STATUSZOK = ("új", "elfogadva")
+
+
 def rendeles_letrehoz(r: Rendeles) -> int:
     """A fejléc és az összes tétel vagy mind elmentődik, vagy egyik sem."""
     if r.ertekeles is None:
         # Az API rendelésleadási folyamata értékelést kér, bár a dump oszlopa nullable.
         raise ValueError("Az 'ertekeles' az adatbázisban kötelező mező.")
+    if r.statusz == "lemondva":
+        raise ValueError("Új rendelés nem hozható létre lemondott státusszal.")
     with kapcsolat() as conn:
         futar = conn.execute(
             "SELECT jarmu FROM futar WHERE id = ?", (r.futar_id,)
@@ -268,11 +273,37 @@ def _rendeles_betolt(conn: sqlite3.Connection, sor: sqlite3.Row) -> Rendeles:
 
 
 def rendeles_statusz_modosit(rendeles_id: int, statusz: str) -> bool:
+    if statusz == "lemondva":
+        raise ValueError(
+            "A rendelést csak a lemondási művelettel lehet lemondani."
+        )
     with kapcsolat() as conn:
         cur = conn.execute(
             "UPDATE rendeles SET statusz = ? WHERE id = ?", (statusz, rendeles_id)
         )
         return cur.rowcount > 0
+
+
+def rendeles_lemond(rendeles_id: int) -> bool:
+    """Lemondja az új vagy elfogadott rendelést; False, ha nem létezik."""
+    placeholders = ", ".join("?" for _ in LEMONDHATO_STATUSZOK)
+    with kapcsolat() as conn:
+        cur = conn.execute(
+            f"UPDATE rendeles SET statusz = 'lemondva' "
+            f"WHERE id = ? AND statusz IN ({placeholders})",
+            (rendeles_id, *LEMONDHATO_STATUSZOK),
+        )
+        if cur.rowcount:
+            return True
+
+        sor = conn.execute(
+            "SELECT statusz FROM rendeles WHERE id = ?", (rendeles_id,)
+        ).fetchone()
+        if sor is None:
+            return False
+        raise ValueError(
+            f"A rendelés jelenlegi státusza '{sor['statusz']}', ezért nem mondható le."
+        )
 
 
 # ---------------------------------------------------------------------------

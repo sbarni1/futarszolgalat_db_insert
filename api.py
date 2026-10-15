@@ -583,6 +583,19 @@ def ep_rendeles_allergenek(rendeles_id: int):
 def ep_rendeles_statusz_modosit(
     rendeles_id: int, body: RendelesStatuszRequest
 ):
-    if not adatbazis.rendeles_statusz_modosit(rendeles_id, body.statusz):
-        raise HTTPException(status_code=404, detail="Rendelés nem található")
+    try:
+        if not adatbazis.rendeles_statusz_modosit(rendeles_id, body.statusz):
+            raise HTTPException(status_code=404, detail="Rendelés nem található")
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     return {"ok": True}
+
+
+@app.post("/rendeles/{rendeles_id}/lemondas")
+def ep_rendeles_lemond(rendeles_id: int):
+    try:
+        if not adatbazis.rendeles_lemond(rendeles_id):
+            raise HTTPException(status_code=404, detail="Rendelés nem található")
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    return {"ok": True, "statusz": "lemondva"}
